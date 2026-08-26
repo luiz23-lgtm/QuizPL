@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Environment files (nunca subir senhas!)
+.env
+.env.example
+.env.local
+.env.*.local
+
+# Arquivos com senhas, anotações pessoais e scripts do Windows
+SENHAS.md
+SENHAS*.md
+CORRECOES.md
+CORRECOES*.md
+start.bat
+*.bat
+*.cmd
+
+# Banco de dados local / SQLite / dumps
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+dump.sql
+backup.sql
+
+# Uploads locais
+uploads/
+storage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prisma
+prisma/migrations/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+.turbo/
