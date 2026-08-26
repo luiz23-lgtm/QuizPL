@@ -129,7 +129,21 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    await query('DELETE FROM quizzes WHERE id = $1', [parseInt(id)]);
+    const quizId = parseInt(id);
+
+    // Delete dependent records in correct order to avoid FK constraint violations
+    // 1. Delete answers (depends on questions)
+    await query(
+      'DELETE FROM answers WHERE question_id IN (SELECT id FROM questions WHERE quiz_id = $1)',
+      [quizId]
+    );
+    // 2. Delete questions (depends on quizzes)
+    await query('DELETE FROM questions WHERE quiz_id = $1', [quizId]);
+    // 3. Delete quiz completions (depends on quizzes)
+    await query('DELETE FROM quiz_completions WHERE quiz_id = $1', [quizId]);
+    // 4. Finally delete the quiz itself
+    await query('DELETE FROM quizzes WHERE id = $1', [quizId]);
+
     res.sendStatus(204);
   } catch (error) {
     console.error('Delete quiz error:', error);

@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { query } from '../lib/db';
+import pool from '../lib/db';
 import { calculateLevel } from './users';
 
 const router = express.Router();
@@ -188,23 +189,29 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
       });
     }
 
-    // Start transaction
-    await query('BEGIN');
+    // Start transaction using a dedicated client so BEGIN/COMMIT/ROLLBACK
+    // are all executed on the same connection from the pool.
+    const client = await pool.connect();
 
     try {
+      await client.query('BEGIN');
+
       // Create answers
       for (const answer of userAnswers) {
-        await query(
-          `INSERT INTO answers (user_id, question_id, selected_option, is_correct) 
-           VALUES ($1, $2, $3, $4) 
-           ON CONFLICT (user_id, question_id) DO UPDATE 
-           SET selected_option = $3, is_correct = $4`,
-          [userId, answer.questionId, answer.selectedOption, answer.isCorrect]
-        );
+        // Only insert if selectedOption is non-empty (unanswered questions are skipped)
+        if (answer.selectedOption) {
+          await client.query(
+            `INSERT INTO answers (user_id, question_id, selected_option, is_correct) 
+             VALUES ($1, $2, $3, $4) 
+             ON CONFLICT (user_id, question_id) DO UPDATE 
+             SET selected_option = $3, is_correct = $4`,
+            [userId, answer.questionId, answer.selectedOption, answer.isCorrect]
+          );
+        }
       }
 
       // Update user
-      const userResult = await query(
+      const userResult = await client.query(
         'SELECT * FROM users WHERE id = $1',
         [userId]
       );
@@ -214,19 +221,19 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
       const newXp = user.xp + totalXp;
       const newLevel = calculateLevel(newXp);
 
-      await query(
+      await client.query(
         'UPDATE users SET xp = $1, level = $2, last_activity_date = NOW() WHERE id = $3',
         [newXp, newLevel, userId]
       );
 
       // Create XP history
-      await query(
+      await client.query(
         'INSERT INTO xp_history (user_id, amount, reason) VALUES ($1, $2, $3)',
         [userId, totalXp, `Completed quiz: ${quiz.title}`]
       );
 
       // Create completion
-      const completionResult = await query(
+      const completionResult = await client.query(
         `INSERT INTO quiz_completions (user_id, quiz_id, score) 
          VALUES ($1, $2, $3) 
          RETURNING *`,
@@ -235,12 +242,12 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
       const completion = completionResult.rows[0];
 
       // Check achievements
-      const achievementsResult = await query('SELECT * FROM achievements');
+      const achievementsResult = await client.query('SELECT * FROM achievements');
       const achievements = achievementsResult.rows;
       const unlockedAchievements: any[] = [];
 
       for (const achievement of achievements) {
-        const alreadyUnlocked = await query(
+        const alreadyUnlocked = await client.query(
           'SELECT id FROM user_achievements WHERE user_id = $1 AND achievement_id = $2',
           [userId, achievement.id]
         );
@@ -255,21 +262,22 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
           case 'FIRST_QUIZ':
             unlocked = true;
             break;
-          case 'QUIZ_COUNT':
-            const quizCountResult = await query(
+          case 'QUIZ_COUNT': {
+            const quizCountResult = await client.query(
               'SELECT COUNT(*) as count FROM quiz_completions WHERE user_id = $1',
               [userId]
             );
             const quizCount = parseInt(quizCountResult.rows[0].count);
             unlocked = quizCount >= achievement.requirement;
             break;
+          }
           case 'STREAK':
             unlocked = user.streak >= achievement.requirement;
             break;
         }
 
         if (unlocked) {
-          await query(
+          await client.query(
             'INSERT INTO user_achievements (user_id, achievement_id) VALUES ($1, $2)',
             [userId, achievement.id]
           );
@@ -277,9 +285,9 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
         }
       }
 
-      await query('COMMIT');
+      await client.query('COMMIT');
 
-      const updatedUserResult = await query(
+      const updatedUserResult = await client.query(
         'SELECT id, name, email, role, avatar, xp, level, streak FROM users WHERE id = $1',
         [userId]
       );
@@ -293,8 +301,10 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
         unlockedAchievements,
       });
     } catch (error) {
-      await query('ROLLBACK');
+      await client.query('ROLLBACK');
       throw error;
+    } finally {
+      client.release();
     }
   } catch (error) {
     console.error('Submit quiz error:', error);

@@ -89,7 +89,12 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    await query('DELETE FROM questions WHERE id = $1', [parseInt(id)]);
+    const questionId = parseInt(id);
+
+    // Delete answers first to avoid FK constraint violation
+    await query('DELETE FROM answers WHERE question_id = $1', [questionId]);
+    await query('DELETE FROM questions WHERE id = $1', [questionId]);
+
     res.sendStatus(204);
   } catch (error) {
     console.error('Delete question error:', error);
