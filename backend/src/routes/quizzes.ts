@@ -306,9 +306,12 @@ router.post('/:id/submit', authenticateToken, async (req: AuthRequest, res) => {
     } finally {
       client.release();
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Submit quiz error:', error);
-    res.status(500).json({ error: 'Failed to submit quiz' });
+    res.status(500).json({
+      error: 'Failed to submit quiz',
+      detail: error?.message || String(error),
+    });
   }
 });
 
